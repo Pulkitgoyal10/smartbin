@@ -1,87 +1,53 @@
-const express = require("express");
-const cors = require("cors");
-const { Pool } = require("pg");
-
+const express = require('express');
+const cors = require('cors');
 const app = express();
 
 app.use(cors());
 app.use(express.json());
 
-// ✅ CONNECT TO RAILWAY POSTGRES (NO LOCALHOST)
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: {
-    rejectUnauthorized: false,
-  },
+// Initialize with some default data so the GET request never fails
+let binData = [{
+    bin_id: "Bin_001",
+    fill_percentage: 0.0,
+    battery: 80
+}];
+
+// Simple health check
+app.get('/', (req, res) => {
+    res.send("Smart Bin API is active!");
 });
 
-// Test DB connection
-pool.connect((err, client, release) => {
-  if (err) {
-    console.error("❌ DB Connection Error:", err);
-  } else {
-    console.log("✅ Connected to PostgreSQL");
-    release();
-  }
+// GET: What the Dashboard calls
+app.get('/data', (req, res) => {
+    res.status(200).json(binData);
 });
 
-// ROUTES
+// POST: What the ESP32 calls
+app.post('/data', (req, res) => {
+    try {
+        const { bin_id, fill_percentage, battery } = req.body;
+        
+        // Basic validation to prevent "Server error"
+        if (!bin_id) {
+            return res.status(400).json({ error: "Missing bin_id" });
+        }
 
-app.get("/", (req, res) => {
-  res.send("Smart Dustbin Backend Running");
-});
+        binData[0] = {
+            bin_id: bin_id,
+            fill_percentage: parseFloat(fill_percentage) || 0,
+            battery: battery || 80
+        };
 
-// INSERT DATA
-app.post("/data", async (req, res) => {
-  try {
-    let { bin_id, fill_percentage, battery } = req.body;
-
-    fill_percentage = Math.round(parseFloat(fill_percentage));
-    battery = battery !== undefined ? Math.round(parseFloat(battery)) : null;
-
-    if (!bin_id || isNaN(fill_percentage)) {
-      return res.status(400).json({ error: "Invalid data" });
+        console.log("Updated Data:", binData[0]);
+        res.status(201).json({ status: "success", received: binData[0] });
+        
+    } catch (err) {
+        console.error("Internal Error:", err);
+        res.status(500).json({ error: "Server crashed during processing" });
     }
-
-    const query = `
-      INSERT INTO dustbin_data (bin_id, fill_percentage, battery)
-      VALUES ($1, $2, $3)
-      RETURNING *;
-    `;
-
-    const values = [bin_id, fill_percentage, battery];
-
-    const result = await pool.query(query, values);
-
-    console.log("📦 Data Inserted:", result.rows[0]);
-
-    res.status(201).json({
-      message: "Data stored successfully",
-      data: result.rows[0],
-    });
-  } catch (error) {
-    console.error("❌ Insert Error:", error);
-    res.status(500).json({ error: "Server error" });
-  }
 });
 
-// FETCH DATA
-app.get("/data", async (req, res) => {
-  try {
-    const result = await pool.query(
-      "SELECT * FROM dustbin_data ORDER BY timestamp DESC LIMIT 50",
-    );
-
-    res.json(result.rows);
-  } catch (error) {
-    console.error("❌ Fetch Error:", error);
-    res.status(500).json({ error: "Server error" });
-  }
-});
-
-// ✅ CORRECT PORT FOR RAILWAY
 const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Server ready on port ${PORT}`);
 });
